@@ -14,16 +14,21 @@ final class ProductsViewModel: ObservableObject {
     @Published private(set) var products: [Product] = []
     @Published var selectedFilter: FilterOption? = nil
     @Published var selectedCategory: CategoryOption? = nil
+    @Published var isLoading: Bool = false
     private var lastDocument: DocumentSnapshot? = nil
     
     let productsManager: ProductsManager
+    let userManager: UserManager
+    let authenticationManager: AuthenticationManager
     
-    init(productsManager: ProductsManager) {
+    init(productsManager: ProductsManager, userManager: UserManager, authenticationManager: AuthenticationManager) {
         self.productsManager = productsManager
+        self.userManager = userManager
+        self.authenticationManager = authenticationManager
     }
     
     convenience init () {
-        self.init(productsManager: ProductsManager())
+        self.init(productsManager: ProductsManager(), userManager: UserManager(), authenticationManager: AuthenticationManager())
     }
     
     enum FilterOption: String, CaseIterable {
@@ -63,43 +68,34 @@ final class ProductsViewModel: ObservableObject {
     
     func categorySelected(option: CategoryOption) async {
         self.selectedCategory = option
+        self.products = []
+        self.lastDocument = nil
         self.getProducts()
         
     }
     
     func getProducts() {
         Task {
-            do {
+            isLoading = true
                 let (newProducts, lastDocument) = try await productsManager.getAllProducts(priceDescending:
-                                                                                            selectedFilter?.priceDescending, forCategory: selectedCategory?.categoryKey, count: 10, lastDocument: lastDocument)
+                                                                                            selectedFilter?.priceDescending, forCategory: selectedCategory?.categoryKey, count: 5, lastDocument: lastDocument)
                 self.products.append(contentsOf: newProducts)
                 if let lastDocument {
                     self.lastDocument = lastDocument
+                    isLoading = false
+                    print("DEBUG lastDocument is \(lastDocument)")
+                } else {
+                    print("DEBUG lastDocument is nil")
                 }
-                
-            } catch {
-                print(error.localizedDescription)
-            }
         }
     }
     
-    func getProductsCount() {
+    func addUserFavoriteProduct(productId: Int) {
         Task {
-            let count = try await productsManager.getAllProductCount()
+            let authDataResults = try authenticationManager.getAuthenticatedUser()
+            try await userManager.addUserFavoriteProduct(userId: authDataResults.uid, productId: productId)
         }
     }
-
-//    func getProductsByRating() {
-//        Task {
-//            do {
-//                let (newProducts, lastDocument) = try await productsManager.getProductsByRating(cout: 3, lastDocument: lastDocument)
-//                self.products.append(contentsOf: newProducts)
-//                self.lastDocument = lastDocument
-//            } catch {
-//
-//            }
-//        }
-//    }
 }
 
 struct ProductsView: View {
@@ -108,11 +104,14 @@ struct ProductsView: View {
     
     var body: some View {
         List {
-            
             ForEach(viewModel.products) { product in
                 ProductCellView(product: product)
-                
-                if product == viewModel.products.last {
+                    .contextMenu {
+                        Button("Add to favorites") {
+                            viewModel.addUserFavoriteProduct(productId: product.id)
+                        }
+                    }
+                if product == viewModel.products.last && viewModel.isLoading == false {
                     ProgressView()
                         .onAppear {
                             viewModel.getProducts()
